@@ -69,7 +69,7 @@ export default function App() {
                 <input className="bg-[#1f1f1f] hover:bg-[#2a2a2a] transition-colors duration-200 px-4 py-2 rounded-full w-full" type="text" placeholder="Enter your Spotify link" value={spotifyLink} onChange={e => setSpotifyLink(e.target.value)}></input>
                 <p className="text-xs mt-1 opacity-50">{spotifyLink?.match(typeRegex)?.[0].toUpperCase() ?? "Invalid type"} - {spotifyLink?.replace(idRegex, "") || "No ID found"}</p>
 
-                <motion.div key={spotifyLinkResult?.id} className='my-4 flex'>
+                <motion.div key={spotifyLinkResult?.id} className='my-4 flex self-start'>
                     <img className='h-20' src={spotifyLinkResult?.images?.at(-1)?.url}></img>
                     <div className='ml-2'>
                         <h1 className='text-xl font-medium leading-none'>{spotifyLinkResult?.name}</h1>
