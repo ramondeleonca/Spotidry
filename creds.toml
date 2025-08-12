@@ -1,0 +1,7 @@
+# !HEY! Please don't do anything with this :(
+# This file contains the credentials to access the API, without these Spotidry won't work.
+# Please don't use these for personal purposes, they are only meant for this app.
+# Getting an API key is very easy and free! Get it at https://developer.spotify.com/dashboard
+# ! DO NOT MODIFY THIS FILE !
+client_id = "M2VlMDE3ZGUzNjZhNGI1Mjg1Y2Y2M2ExZGVlMDQ1NTk="
+client_secret = "ZjM5ZGVlMWVkNWFjNDQ1M2JkYzc5NjA2YjQyZjFlZjg="
