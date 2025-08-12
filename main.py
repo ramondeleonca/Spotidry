@@ -53,6 +53,7 @@ with open(os.path.join(DIRNAME, 'creds.toml'), 'r') as f:
 sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(
     client_id=base64.b64decode(creds.get("client_id")).decode('utf-8'),
     client_secret=base64.b64decode(creds.get("client_secret")).decode('utf-8'),
+    cache_handler=spotipy.MemoryCacheHandler() # We want this so it doesnt leave behind a .cache file with the token IN PLAIN SIGHT
 ))
 
 # Create an API for the window to communicate with python
