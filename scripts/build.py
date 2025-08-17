@@ -1,5 +1,6 @@
 import os
 import subprocess as sp
+import sys
 from PyInstaller import __main__ as pyinstaller
 
 def main():
@@ -10,9 +11,11 @@ def main():
     pyinstaller.run([
         '--name=Spotidry',
         '--onefile',
+        # '--no-console',
         f'--add-data=frontend/dist{os.pathsep}frontend/dist',
         f'--add-data=creds.toml{os.pathsep}.',
         '-y',
+        '--icon=frontend/public/static/SpotidryIcon.ico',
         'main.py'
     ])
 
