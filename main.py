@@ -1,3 +1,5 @@
+import pytube.parser
+import spotdl.download
 import toml
 import os
 import sys
@@ -9,7 +11,28 @@ import platformdirs
 import re
 import spotipy
 import pytube
+import threading
+import json
+import asyncio
+import spotdl
+import gettext
+import multiprocessing as mp
+from spotdl.types.song import Song
+from spotdl.types.album import Album
+from spotdl.types.playlist import Playlist
+from typing import Callable
 from spotipy.oauth2 import SpotifyClientCredentials
+
+# Disable translations for now
+def null_translation(*args, **kwargs):
+    return gettext.NullTranslations()
+
+gettext.translation = null_translation
+gettext.install = lambda *args, **kwargs: None
+
+os.environ['LANGUAGE'] = 'C'
+os.environ['LC_ALL'] = 'C'
+os.environ['LANG'] = 'C'
 
 # Load arguments
 argparser = argparse.ArgumentParser(
@@ -39,21 +62,23 @@ APP_NAME = "Spotidry"
 APP_DATA_DIR = platformdirs.user_data_dir(APP_NAME)
 if not os.path.exists(APP_DATA_DIR):
     os.makedirs(APP_DATA_DIR)
+CACHE_DIR = platformdirs.user_cache_dir(APP_NAME)
 
 # Set output dir (Create if missing)
-OUT_DIR = os.path.join(platformdirs.user_music_dir(), APP_NAME)
-if not os.path.exists(OUT_DIR):
-    os.makedirs(OUT_DIR)
+OUT_DIR_BASE = os.path.join(platformdirs.user_music_dir(), APP_NAME)
+if not os.path.exists(OUT_DIR_BASE):
+    os.makedirs(OUT_DIR_BASE)
 
 # Load credentials
 with open(os.path.join(DIRNAME, 'creds.toml'), 'r') as f:
     creds = toml.load(f)
 
 # Create Spotipy client
-# spotdl.SpotifyClient.init(*)
+CLIENT_ID = base64.b64decode(creds.get("client_id")).decode('utf-8')
+CLIENT_SECRET = base64.b64decode(creds.get("client_secret")).decode('utf-8')
 sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(
-    client_id=base64.b64decode(creds.get("client_id")).decode('utf-8'),
-    client_secret=base64.b64decode(creds.get("client_secret")).decode('utf-8'),
+    client_id=CLIENT_ID,
+    client_secret=CLIENT_SECRET,
     cache_handler=spotipy.MemoryCacheHandler() # We want this so it doesnt leave behind a .cache file with the token IN PLAIN SIGHT
 ))
 
@@ -69,36 +94,141 @@ def get_from_link(link: str):
 
     # Fetch data from Spotify
     if type_match == 'track':
-        return sp.track(id_match)
+        result = sp.track(id_match)
     elif type_match == 'album':
-        return sp.album(id_match)
+        result = sp.album(id_match)
     elif type_match == 'playlist':
-        return sp.playlist(id_match)
+        result = sp.playlist(id_match)
     
-    return None
+    return result
+
+track_search_thread: threading.Thread = None
+track_search_results = {}
+def search_tracks_in_background(spotify_result, on_result: Callable):
+    global track_search_thread, track_search_results
+
+    is_album = spotify_result["type"] == "album"
+
+    def search():
+        tracks = spotify_result["tracks"]["items"]
+        for trackItem in tracks:
+            track = trackItem["track"] if not is_album else trackItem
+
+            if track is None:
+                continue
+            
+            videos: list[pytube.YouTube]
+            videos, continuation = pytube.Search(track["name"]).fetch_and_parse()
+
+            if videos is None:
+                continue
+            
+            track_search_results[track["id"]] = videos[0].vid_info
+
+            on_result(track_search_results)
+
+    if track_search_thread and track_search_thread.is_alive():
+        track_search_thread.join()
+
+    track_search_results = {}
+    track_search_thread = threading.Thread(target=search)
+    track_search_thread.start()
+
+def update_track_results(results):
+    window.evaluate_js(f"console.log(`{json.dumps(results)}`)")
+
+def _download_worker(link, type_match, out_dir, client_id, client_secret):
+    """Global worker function that can be pickled"""
+    dl = spotdl.Spotdl(
+        client_id=client_id,
+        client_secret=client_secret
+    )
+    
+    if out_dir:
+        dl.downloader.settings["output"] = out_dir
+    
+    try:
+        if type_match == 'track':
+            song = Song.from_url(link)
+            result = dl.download(song)
+            return [result]
+            
+        elif type_match == 'album':
+            album = Album.from_url(link)
+            results = []
+            for song in album.songs:
+                try:
+                    result = dl.download(song)
+                    results.append(result)
+                except Exception as e:
+                    print(f"Failed to download {song.name}: {e}")
+                    continue
+            return results
+            
+        elif type_match == 'playlist':
+            playlist = Playlist.from_url(link)
+            results = []
+            for song in playlist.songs:
+                try:
+                    result = dl.download(song)
+                    results.append(result)
+                except Exception as e:
+                    print(f"Failed to download {song.name}: {e}")
+                    continue
+            return results
+            
+    except Exception as e:
+        print(f"Download error: {e}")
+        return None
+    finally:
+        # Clean up if needed
+        pass
+
+def download_content(link, type_match, out_dir=None):
+    """Multiprocessing solution with proper pickling"""
+    # Use multiprocessing with a global function
+    with mp.Pool(processes=1) as pool:
+        result = pool.apply(
+            _download_worker, 
+            args=(link, type_match, out_dir, CLIENT_ID, CLIENT_SECRET)
+        )
+        return result
 
 # Create an API for the window to communicate with python
+window: webview.Window
 class API:
     def chooseFolder(self, *args):
-        global OUT_DIR
-        paths = window.create_file_dialog(dialog_type=FileDialog.FOLDER, directory=OUT_DIR, allow_multiple=False)
+        global OUT_DIR_BASE
+        paths = window.create_file_dialog(dialog_type=FileDialog.FOLDER, directory=OUT_DIR_BASE, allow_multiple=False)
         if paths:
-            OUT_DIR = paths[0]
-        return OUT_DIR
+            OUT_DIR_BASE = paths[0]
+        return OUT_DIR_BASE
     
     def getSelectedFolder(self, *args):
-        return OUT_DIR
+        return OUT_DIR_BASE
     
     def getFromLink(self, *args):
         link = args[0]
-        return get_from_link(link)
+        result = get_from_link(link)
+        # search_tracks_in_background(result, update_track_results)
+        return result
 
     def close(self, *args):
         window.destroy()
 
     def freezeDry(self, *args):
         link = args[0]
-        pass
+
+        out_dir = OUT_DIR_BASE
+        os.makedirs(out_dir, exist_ok=True)
+
+        type_match = re.search(type_regex, link, flags=type_regex_flags)
+        if not type_match:
+            return None
+        type_match = type_match.group(0).lower()
+
+        return download_content(link, type_match, out_dir)
+            
 
 # Create webview window
 window_top_bar_height = 32
