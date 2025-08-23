@@ -16,6 +16,7 @@ import json
 import asyncio
 import spotdl
 import gettext
+import concurrent.futures
 import multiprocessing as mp
 from spotdl.types.song import Song
 from spotdl.types.album import Album
@@ -137,62 +138,41 @@ def search_tracks_in_background(spotify_result, on_result: Callable):
 def update_track_results(results):
     window.evaluate_js(f"console.log(`{json.dumps(results)}`)")
 
-def _download_worker(link, type_match, out_dir, client_id, client_secret):
-    """Global worker function that can be pickled"""
-    dl = spotdl.Spotdl(
-        client_id=client_id,
-        client_secret=client_secret
-    )
-    
-    if out_dir:
-        dl.downloader.settings["output"] = out_dir
-    
-    try:
-        if type_match == 'track':
-            song = Song.from_url(link)
-            result = dl.download(song)
-            return [result]
-            
-        elif type_match == 'album':
-            album = Album.from_url(link)
-            results = []
-            for song in album.songs:
-                try:
-                    result = dl.download(song)
-                    results.append(result)
-                except Exception as e:
-                    print(f"Failed to download {song.name}: {e}")
-                    continue
-            return results
-            
-        elif type_match == 'playlist':
-            playlist = Playlist.from_url(link)
-            results = []
-            for song in playlist.songs:
-                try:
-                    result = dl.download(song)
-                    results.append(result)
-                except Exception as e:
-                    print(f"Failed to download {song.name}: {e}")
-                    continue
-            return results
-            
-    except Exception as e:
-        print(f"Download error: {e}")
-        return None
-    finally:
-        # Clean up if needed
-        pass
-
 def download_content(link, type_match, out_dir=None):
-    """Multiprocessing solution with proper pickling"""
-    # Use multiprocessing with a global function
-    with mp.Pool(processes=1) as pool:
-        result = pool.apply(
-            _download_worker, 
-            args=(link, type_match, out_dir, CLIENT_ID, CLIENT_SECRET)
+    """Thread-based solution that avoids pickling issues"""
+    
+    def _download():
+        dl = spotdl.Spotdl(
+            client_id=CLIENT_ID,
+            client_secret=CLIENT_SECRET
         )
-        return result
+        
+        if out_dir:
+            dl.downloader.settings["output"] = out_dir
+        
+        try:
+            if type_match == 'track':
+                song = Song.from_url(link)
+                results = [dl.download(song)]
+                return results
+                
+            elif type_match == 'album':
+                album = Album.from_url(link)
+                results = dl.download_songs(album.songs)
+                
+            elif type_match == 'playlist':
+                playlist = Playlist.from_url(link)
+                results = dl.download_songs(playlist.songs)
+                return results
+                
+        except Exception as e:
+            print(f"Download error: {e}")
+            return None
+    
+    # Use ThreadPoolExecutor instead of multiprocessing
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        future = executor.submit(_download)
+        return future.result()
 
 # Create an API for the window to communicate with python
 window: webview.Window
